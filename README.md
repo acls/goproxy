@@ -11,42 +11,65 @@ slt multiplexes connections to a single TLS port by inspecting the name in the S
 ### Simple YAML Configuration
 You configure slt with a simple YAML configuration file:
 
-    bind_addr: ":443"
+```yaml
+tls:
+  secure: true
+  bind_addr: :443
 
-    frontends:
-      v1.example.com:
-        backends:
-          -
-            addr: ":4443"
+  frontends:
+    v1.example.com:
+      backends:
+      - addr: :4443
 
-      v2.example.com:
-        backends:
-          -
-            addr: "192.168.0.2:443"
-          -
-            addr: "192.168.0.1:443"
+    v2.example.com:
+      backends:
+      - addr: 192.168.0.2:443
+      - addr: 192.168.0.1:443
+
+http:
+  secure: false
+  bind_addr: :80
+
+  frontends:
+    test.example.com:
+      backends:
+      - addr: 192.168.1.1:443
+
+name:
+  secure: false
+  bind_addr: :1234
+
+  frontends:
+    test.example.com:
+      backends:
+      - addr: 192.168.2.1:1234
+```
 
 
 ### Optional TLS Termination
 Sometimes, you don't actually want to terminate the TLS traffic, you just want to forward it elsewhere. slt only
 terminates the TLS traffic if you specify a private key and certificate file like so:
 
-    frontends:
-      v1.example.com:
-        tls_key: /path/to/v1.example.com.key
-        tls_crt: /path/to/v1.example.com.crt
+```yaml
+name:
+  frontends:
+    v1.example.com:
+      tls_key: /path/to/v1.example.com.key
+      tls_crt: /path/to/v1.example.com.crt
+```
 
 
 ### Round robin load balancing among arbitrary backends
 slt performs simple round-robin load balancing when more than one backend is available (other strategies will be available in the future):
 
-    frontends:
-      v1.example.com:
-        backends:
-          -
-            addr: ":8080"
-          -
-            addr: ":8081"
+```yaml
+name:
+  frontends:
+    v1.example.com:
+      backends:
+      - addr: :8080
+      - addr: :8081
+```
 
 
 # Running it
@@ -60,9 +83,6 @@ Just cd into the directory and "go build". It requires Go 1.1+.
 
 # Testing it
 Just cd into the directory and "go test".
-
-# Stability
-I run slt in production handling hundreds of thousands of connections daily.
 
 # License
 Apache

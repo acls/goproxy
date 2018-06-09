@@ -1,13 +1,15 @@
-package main
+package proxy
 
 import (
 	"crypto/tls"
 	"fmt"
 	"io/ioutil"
-	"log"
 	"net"
 	"reflect"
+	"slt/conf"
 	"testing"
+
+	"go.uber.org/zap"
 )
 
 var snakeoilCert = `-----BEGIN CERTIFICATE-----
@@ -41,17 +43,19 @@ hCMOMi+/GdJxFaiya4ECQCabLUAE0YEZL0M4mrcALa4T0C2sKCW8Xo2wvbwDGc1Y
 +GQErfiGNv0xDOWLYrqe40x71R8z4kZv4EKLH/7zjTE=
 -----END RSA PRIVATE KEY-----`
 
-func loadSnakeoilConfig(crtPath, keyPath string) (*tls.Config, error) {
-	cert, err := tls.X509KeyPair([]byte(snakeoilCert), []byte(snakeoilKey))
-	if err != nil {
-		return nil, err
-	}
+func init() {
+	loadTLSConfig = func(crtPath, keyPath string) (*tls.Config, error) {
+		cert, err := tls.X509KeyPair([]byte(snakeoilCert), []byte(snakeoilKey))
+		if err != nil {
+			return nil, err
+		}
 
-	return &tls.Config{Certificates: []tls.Certificate{cert}}, nil
+		return &tls.Config{Certificates: []tls.Certificate{cert}}, nil
+	}
 }
 
 func backendOrFail(t *testing.T) (net.Listener, string) {
-	cfg, err := loadSnakeoilConfig("", "")
+	cfg, err := loadTLSConfig("", "")
 	if err != nil {
 		t.Fatalf("Failed to make snakeoil certificate: %v", err)
 	}
@@ -64,29 +68,30 @@ func backendOrFail(t *testing.T) (net.Listener, string) {
 	return l, fmt.Sprintf("127.0.0.1:%d", l.Addr().(*net.TCPAddr).Port)
 }
 
-func mkServer(t *testing.T, cfgString string) *Server {
-	config, err := parseConfig([]byte(cfgString), loadSnakeoilConfig)
-	if err != nil {
-		t.Fatalf("Failed to parse config: %v", err)
-	}
-
+func mkServer(t *testing.T, binding *conf.Binding) *Server {
 	return &Server{
-		Configuration: config,
-		Logger:        log.New(ioutil.Discard, "", 0),
-		ready:         make(chan int),
+		Binding:   binding,
+		Logger:    zap.L(),
+		ready:     make(chan struct{}),
+		frontends: make(map[string]*frontend),
 	}
 }
 
 func TestSimple(t *testing.T) {
 	l, addr := backendOrFail(t)
-	s := mkServer(t, fmt.Sprintf(`
-bind_addr: "127.0.0.1:55111"
-frontends:
-  test.example.com:
-    backends:
-      -
-        addr: %s
-`, addr))
+	s := mkServer(t, &conf.Binding{
+		Secure:   true,
+		BindAddr: "127.0.0.1:55111",
+		Frontends: map[string]*conf.Frontend{
+			"test.example.com": &conf.Frontend{
+				Backends: []conf.Backend{
+					conf.Backend{
+						Addr: addr,
+					},
+				},
+			},
+		},
+	})
 
 	go s.Run()
 	// wait for the listener to bind
@@ -123,19 +128,26 @@ func TestMany(t *testing.T) {
 	l1, addr1 := backendOrFail(t)
 	l2, addr2 := backendOrFail(t)
 
-	s := mkServer(t, fmt.Sprintf(`
-bind_addr: "127.0.0.1:55111"
-frontends:
-  test1.example.com:
-    backends:
-      -
-        addr: %s
-
-  test2.example.com:
-    backends:
-      -
-        addr: %s
-`, addr1, addr2))
+	s := mkServer(t, &conf.Binding{
+		Secure:   true,
+		BindAddr: "127.0.0.1:55111",
+		Frontends: map[string]*conf.Frontend{
+			"test1.example.com": &conf.Frontend{
+				Backends: []conf.Backend{
+					conf.Backend{
+						Addr: addr1,
+					},
+				},
+			},
+			"test2.example.com": &conf.Frontend{
+				Backends: []conf.Backend{
+					conf.Backend{
+						Addr: addr2,
+					},
+				},
+			},
+		},
+	})
 
 	go s.Run()
 	// wait for the listener to bind
@@ -171,6 +183,7 @@ frontends:
 	}
 
 	go sendData("Hello 1", "test1.example.com")
+	zap.L().Info("asfd")
 	check(l1, "Hello 1")
 
 	go sendData("Hello 2", "test2.example.com")
@@ -180,14 +193,19 @@ frontends:
 func TestHostNotFound(t *testing.T) {
 	_, addr := backendOrFail(t)
 
-	s := mkServer(t, fmt.Sprintf(`
-bind_addr: "127.0.0.1:55111"
-frontends:
-  test.example.com:
-    backends:
-      -
-        addr: %s
-`, addr))
+	s := mkServer(t, &conf.Binding{
+		Secure:   true,
+		BindAddr: "127.0.0.1:55111",
+		Frontends: map[string]*conf.Frontend{
+			"test.example.com": &conf.Frontend{
+				Backends: []conf.Backend{
+					conf.Backend{
+						Addr: addr,
+					},
+				},
+			},
+		},
+	})
 
 	go s.Run()
 	<-s.ready
@@ -203,16 +221,22 @@ func TestRoundRobin(t *testing.T) {
 	l1, addr1 := backendOrFail(t)
 	l2, addr2 := backendOrFail(t)
 
-	s := mkServer(t, fmt.Sprintf(`
-bind_addr: "127.0.0.1:55111"
-frontends:
-  test.example.com:
-    backends:
-      -
-        addr: %s
-      -
-        addr: %s
-`, addr1, addr2))
+	s := mkServer(t, &conf.Binding{
+		Secure:   true,
+		BindAddr: "127.0.0.1:55111",
+		Frontends: map[string]*conf.Frontend{
+			"test.example.com": &conf.Frontend{
+				Backends: []conf.Backend{
+					conf.Backend{
+						Addr: addr1,
+					},
+					conf.Backend{
+						Addr: addr2,
+					},
+				},
+			},
+		},
+	})
 
 	go s.Run()
 	// wait for the listener to bind
@@ -234,7 +258,8 @@ frontends:
 
 	var count1, count2 int
 
-	var l net.Listener = l1
+	var l net.Listener
+	l = l1
 	for i := 0; i < 20; i++ {
 		// conections should switch off between backends
 		if l == l1 {
@@ -261,9 +286,9 @@ frontends:
 		}
 
 		if l == l1 {
-			count1 += 1
+			count1++
 		} else {
-			count2 += 1
+			count2++
 		}
 	}
 
@@ -281,16 +306,21 @@ func TestTerminateTLS(t *testing.T) {
 
 	addr := fmt.Sprintf("127.0.0.1:%d", l.Addr().(*net.TCPAddr).Port)
 
-	s := mkServer(t, fmt.Sprintf(`
-bind_addr: "127.0.0.1:55111"
-frontends:
-  test.example.com:
-    tls_crt: /snakeoil.crt
-    tls_key: /snakeoil.key
-    backends:
-      -
-        addr: %s
-`, addr))
+	s := mkServer(t, &conf.Binding{
+		Secure:   true,
+		BindAddr: "127.0.0.1:55111",
+		Frontends: map[string]*conf.Frontend{
+			"test.example.com": &conf.Frontend{
+				TLSCrt: "/snakeoil.crt",
+				TLSKey: "/snakeoil.key",
+				Backends: []conf.Backend{
+					conf.Backend{
+						Addr: addr,
+					},
+				},
+			},
+		},
+	})
 
 	go s.Run()
 	// wait for the listener to bind
