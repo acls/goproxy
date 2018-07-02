@@ -11,25 +11,35 @@ import (
 )
 
 type frontend struct {
-	Name string
+	stopped   bool
+	Name      string
+	BoundAddr string
 	*zap.Logger
 	TLSConfig *tls.Config
 	Listener  net.Listener
 	Strategy  BackendStrategy
 }
 
+func (f *frontend) Stop() error {
+	f.stopped = true
+	return f.Listener.Close()
+}
 func (f *frontend) Run() {
 	f.Info("Handling connections",
+		zap.String("listener", f.BoundAddr),
 		zap.String("frontend", f.Name),
 	)
 	for {
+		if f.stopped {
+			return
+		}
 		// accept next connection to this frontend
 		conn, err := f.Listener.Accept()
+		if f.stopped {
+			return
+		}
 		if err != nil {
-			f.Error("Failed to accept new connection",
-				zap.String("from", conn.RemoteAddr().String()),
-				zap.Error(err),
-			)
+			f.Error("Failed to accept new connection", zap.Error(err))
 			if e, ok := err.(net.Error); ok {
 				if e.Temporary() {
 					continue
@@ -83,15 +93,23 @@ func (f *frontend) joinConnections(c1 net.Conn, c2 net.Conn) {
 		defer dst.Close()
 		defer src.Close()
 		n, err := io.Copy(dst, src)
-		f.Debug("Copy failed after N bytes",
-			zap.String("from", src.RemoteAddr().String()),
-			zap.String("to", dst.RemoteAddr().String()),
-			zap.Int64("bytes", n),
-			zap.Error(err),
-		)
+		if err != nil {
+			f.Debug("Copy failed after N bytes",
+				zap.String("from", src.RemoteAddr().String()),
+				zap.String("to", dst.RemoteAddr().String()),
+				zap.Int64("bytes", n),
+				zap.Error(err),
+			)
+		} else {
+			f.Debug("Copy done after N bytes",
+				zap.String("from", src.RemoteAddr().String()),
+				zap.String("to", dst.RemoteAddr().String()),
+				zap.Int64("bytes", n),
+			)
+		}
 	}
 
-	f.Info("Joining connections",
+	f.Debug("Joining connections",
 		zap.String("from", c1.RemoteAddr().String()),
 		zap.String("to", c2.RemoteAddr().String()),
 	)

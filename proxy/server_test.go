@@ -43,6 +43,8 @@ hCMOMi+/GdJxFaiya4ECQCabLUAE0YEZL0M4mrcALa4T0C2sKCW8Xo2wvbwDGc1Y
 +GQErfiGNv0xDOWLYrqe40x71R8z4kZv4EKLH/7zjTE=
 -----END RSA PRIVATE KEY-----`
 
+const bindAddr = "127.0.0.1:55111"
+
 func init() {
 	loadTLSConfig = func(crtPath, keyPath string) (*tls.Config, error) {
 		cert, err := tls.X509KeyPair([]byte(snakeoilCert), []byte(snakeoilKey))
@@ -52,6 +54,11 @@ func init() {
 
 		return &tls.Config{Certificates: []tls.Certificate{cert}}, nil
 	}
+}
+
+func init() {
+	log, _ := zap.NewDevelopment()
+	zap.ReplaceGlobals(log)
 }
 
 func backendOrFail(t *testing.T) (net.Listener, string) {
@@ -69,39 +76,51 @@ func backendOrFail(t *testing.T) (net.Listener, string) {
 }
 
 func mkServer(t *testing.T, binding *conf.Binding) *Server {
-	return &Server{
+	srv := &Server{
 		Binding:   binding,
 		Logger:    zap.L(),
-		ready:     make(chan struct{}),
 		frontends: make(map[string]*frontend),
 	}
+	srv.Init()
+	return srv
 }
 
 func TestSimple(t *testing.T) {
 	l, addr := backendOrFail(t)
+
+	f1 := &conf.Frontend{
+		BoundAddr: bindAddr,
+		Name:      "wrong",
+		Backends: []conf.Backend{
+			conf.Backend{
+				Addr: addr,
+			},
+		},
+	}
+
 	s := mkServer(t, &conf.Binding{
 		Secure:   true,
-		BindAddr: "127.0.0.1:55111",
+		BindAddr: bindAddr,
 		Frontends: map[string]*conf.Frontend{
-			"test.example.com": &conf.Frontend{
-				Backends: []conf.Backend{
-					conf.Backend{
-						Addr: addr,
-					},
-				},
-			},
+			f1.Name: f1,
 		},
 	})
 
 	go s.Run()
 	// wait for the listener to bind
-	<-s.ready
+	<-s.Ready()
+
+	// test that replacing works
+	s.RemoveFrontend(f1.Name)
+	f1.Name = "test.example.com"
+	s.ReplaceFrontend(f1)
+
 	defer s.mux.Close()
 
 	expected := []byte("Hello World")
 	go func() {
 
-		out, err := tls.Dial("tcp", "127.0.0.1:55111", &tls.Config{ServerName: "test.example.com", InsecureSkipVerify: true})
+		out, err := tls.Dial("tcp", bindAddr, &tls.Config{ServerName: "test.example.com", InsecureSkipVerify: true})
 		if err != nil {
 			t.Fatalf("Failed to dial: %v", err)
 		}
@@ -130,9 +149,11 @@ func TestMany(t *testing.T) {
 
 	s := mkServer(t, &conf.Binding{
 		Secure:   true,
-		BindAddr: "127.0.0.1:55111",
+		BindAddr: bindAddr,
 		Frontends: map[string]*conf.Frontend{
 			"test1.example.com": &conf.Frontend{
+				BoundAddr: bindAddr,
+				Name:      "test1.example.com",
 				Backends: []conf.Backend{
 					conf.Backend{
 						Addr: addr1,
@@ -140,6 +161,8 @@ func TestMany(t *testing.T) {
 				},
 			},
 			"test2.example.com": &conf.Frontend{
+				BoundAddr: bindAddr,
+				Name:      "test2.example.com",
 				Backends: []conf.Backend{
 					conf.Backend{
 						Addr: addr2,
@@ -151,11 +174,11 @@ func TestMany(t *testing.T) {
 
 	go s.Run()
 	// wait for the listener to bind
-	<-s.ready
+	<-s.Ready()
 	defer s.mux.Close()
 
 	sendData := func(payload, name string) {
-		out, err := tls.Dial("tcp", "127.0.0.1:55111", &tls.Config{ServerName: name, InsecureSkipVerify: true})
+		out, err := tls.Dial("tcp", bindAddr, &tls.Config{ServerName: name, InsecureSkipVerify: true})
 		if err != nil {
 			t.Fatalf("Failed to dial: %v", err)
 		}
@@ -195,9 +218,11 @@ func TestHostNotFound(t *testing.T) {
 
 	s := mkServer(t, &conf.Binding{
 		Secure:   true,
-		BindAddr: "127.0.0.1:55111",
+		BindAddr: bindAddr,
 		Frontends: map[string]*conf.Frontend{
 			"test.example.com": &conf.Frontend{
+				BoundAddr: bindAddr,
+				Name:      "test.example.com",
 				Backends: []conf.Backend{
 					conf.Backend{
 						Addr: addr,
@@ -208,10 +233,10 @@ func TestHostNotFound(t *testing.T) {
 	})
 
 	go s.Run()
-	<-s.ready
+	<-s.Ready()
 	defer s.mux.Close()
 
-	_, err := tls.Dial("tcp", "127.0.0.1:55111", &tls.Config{ServerName: "foo.example.com", InsecureSkipVerify: true})
+	_, err := tls.Dial("tcp", bindAddr, &tls.Config{ServerName: "foo.example.com", InsecureSkipVerify: true})
 	if err == nil {
 		t.Fatalf("Expected error when dialing wrong name, got nil")
 	}
@@ -223,9 +248,11 @@ func TestRoundRobin(t *testing.T) {
 
 	s := mkServer(t, &conf.Binding{
 		Secure:   true,
-		BindAddr: "127.0.0.1:55111",
+		BindAddr: bindAddr,
 		Frontends: map[string]*conf.Frontend{
 			"test.example.com": &conf.Frontend{
+				BoundAddr: bindAddr,
+				Name:      "test.example.com",
 				Backends: []conf.Backend{
 					conf.Backend{
 						Addr: addr1,
@@ -240,13 +267,13 @@ func TestRoundRobin(t *testing.T) {
 
 	go s.Run()
 	// wait for the listener to bind
-	<-s.ready
+	<-s.Ready()
 	defer s.mux.Close()
 
 	payload := "Hello world!"
 	go func() {
 		for i := 0; i < 20; i++ {
-			out, err := tls.Dial("tcp", "127.0.0.1:55111", &tls.Config{ServerName: "test.example.com", InsecureSkipVerify: true})
+			out, err := tls.Dial("tcp", bindAddr, &tls.Config{ServerName: "test.example.com", InsecureSkipVerify: true})
 			if err != nil {
 				t.Fatalf("Failed to dial: %v", err)
 			}
@@ -308,11 +335,13 @@ func TestTerminateTLS(t *testing.T) {
 
 	s := mkServer(t, &conf.Binding{
 		Secure:   true,
-		BindAddr: "127.0.0.1:55111",
+		BindAddr: bindAddr,
 		Frontends: map[string]*conf.Frontend{
 			"test.example.com": &conf.Frontend{
-				TLSCrt: "/snakeoil.crt",
-				TLSKey: "/snakeoil.key",
+				TLSCrt:    "/snakeoil.crt",
+				TLSKey:    "/snakeoil.key",
+				BoundAddr: bindAddr,
+				Name:      "test.example.com",
 				Backends: []conf.Backend{
 					conf.Backend{
 						Addr: addr,
@@ -324,12 +353,12 @@ func TestTerminateTLS(t *testing.T) {
 
 	go s.Run()
 	// wait for the listener to bind
-	<-s.ready
+	<-s.Ready()
 	defer s.mux.Close()
 
 	expected := []byte("Hello World")
 	go func() {
-		out, err := tls.Dial("tcp", "127.0.0.1:55111", &tls.Config{ServerName: "test.example.com", InsecureSkipVerify: true})
+		out, err := tls.Dial("tcp", bindAddr, &tls.Config{ServerName: "test.example.com", InsecureSkipVerify: true})
 		if err != nil {
 			t.Fatalf("Failed to dial: %v", err)
 		}

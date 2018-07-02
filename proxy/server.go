@@ -49,7 +49,23 @@ type muxer interface {
 	Close()
 }
 
+// Init func
+func (s *Server) Init() {
+	if s.ready == nil {
+		s.ready = make(chan struct{})
+	}
+}
+
+// Ready func
+func (s *Server) Ready() <-chan struct{} {
+	return s.ready
+}
+
+// Run starts the server
 func (s *Server) Run() error {
+	if s.ready == nil {
+		return fmt.Errorf("%s must call init", s.Name)
+	}
 	if s.stop != nil {
 		return fmt.Errorf("%s already running", s.Name)
 	}
@@ -75,13 +91,17 @@ func (s *Server) Run() error {
 	defer s.RemoveFrontends()
 
 	// setup muxing for each frontend
-	for name, front := range s.Frontends {
-		if err := s.AddFrontend(name, front); err != nil {
+	for _, front := range s.Frontends {
+		if err := s.AddFrontend(front); err != nil {
 			s.Warn("Failed to add frontend",
-				zap.String("name", name),
+				zap.String("name", front.Name),
 				zap.Error(err),
 			)
+			continue
 		}
+		s.Debug("Added frontend",
+			zap.String("name", front.Name),
+		)
 	}
 
 	// custom error handler so we can log errors
@@ -89,85 +109,102 @@ func (s *Server) Run() error {
 		for {
 			conn, err := s.mux.NextError()
 
-			if conn == nil {
-				s.Error("Failed to mux next connection", zap.Error(err))
-				if _, ok := err.(vhost.Closed); ok {
-					return
+			switch err.(type) {
+			case vhost.BadRequest:
+				s.Error("got a bad request!", zap.Error(err))
+				conn.Write([]byte("bad request"))
+			case vhost.NotFound:
+				s.Error("got a connection for an unknown vhost", zap.Error(err))
+				conn.Write([]byte("vhost not found"))
+			case vhost.Closed:
+				s.Error("closed conn", zap.Error(err))
+			default:
+				if conn != nil {
+					conn.Write([]byte("server error"))
 				}
-				continue
-			} else {
-				// if _, ok := err.(vhost.NotFound); ok && s.DefaultFrontend != nil {
-				// 	go s.DefaultFrontend.proxyConnection(conn)
-				// } else {
-				s.Error("Failed to mux connection",
-					zap.String("from", conn.RemoteAddr().String()),
-					zap.Error(err),
-				)
-				// XXX: respond with valid TLS close messages
+			}
+
+			if conn != nil {
 				conn.Close()
-				// }
 			}
 		}
 	}()
 
-	// we're ready, signal it for testing
-	if s.ready != nil {
-		close(s.ready)
-	}
+	// signal we're ready
+	close(s.ready)
 
 	<-s.stop
 	s.stop = nil
 
 	return nil
 }
+
+// Stop stops the server
 func (s *Server) Stop() {
 	if s.stop != nil {
 		close(s.stop)
 	}
 }
 
-func (s *Server) AddFrontend(name string, front *conf.Frontend) error {
+// ReplaceFrontend replaces the frontend
+func (s *Server) ReplaceFrontend(front *conf.Frontend) error {
 	s.frontendsL.Lock()
 	defer s.frontendsL.Unlock()
 
+	if f, ok := s.frontends[front.Name]; ok {
+		s.removeFrontend(f)
+	}
+	return s.addFrontend(front)
+}
+
+// AddFrontend adds the frontend
+func (s *Server) AddFrontend(front *conf.Frontend) error {
+	s.frontendsL.Lock()
+	defer s.frontendsL.Unlock()
+
+	return s.addFrontend(front)
+}
+func (s *Server) addFrontend(front *conf.Frontend) error {
 	if s.frontends == nil {
 		s.frontends = make(map[string]*frontend)
 	}
 
-	f, ok := s.frontends[name]
+	f, ok := s.frontends[front.Name]
 	if ok {
-		return fmt.Errorf("Frontend %s already exists", name)
+		return fmt.Errorf("Frontend %s already exists", front.Name)
 	}
 
 	var tlsConfig *tls.Config
 	if front.TLSCrt != "" || front.TLSKey != "" {
 		var err error
 		if tlsConfig, err = loadTLSConfig(front.TLSCrt, front.TLSKey); err != nil {
-			err = fmt.Errorf("%s: Failed to load TLS configuration for frontend '%v': %v", s.Name, name, err)
+			err = fmt.Errorf("%s: Failed to load TLS configuration for frontend '%v': %v", s.Name, front.Name, err)
 			return err
 		}
 	}
 
-	l, err := s.mux.Listen(name)
+	l, err := s.mux.Listen(front.Name)
 	if err != nil {
 		return err
 	}
 
 	f = &frontend{
-		Name:      name,
+		Name:      front.Name,
+		BoundAddr: front.BoundAddr,
 		Logger:    s.Logger,
 		TLSConfig: tlsConfig,
 		Listener:  l,
-		// always round-robi,n strategy for now
+		// always round-robin strategy for now
 		Strategy: &RoundRobinStrategy{backends: front.Backends},
 	}
-	s.frontends[name] = f
+	s.frontends[f.Name] = f
 
 	go f.Run()
 	return nil
 }
 
-func (s *Server) RemoveFrontend(name string) error {
+// RemoveFrontend removes the frontend
+func (s *Server) RemoveFrontend(name string) {
 	s.frontendsL.Lock()
 	defer s.frontendsL.Unlock()
 
@@ -177,26 +214,28 @@ func (s *Server) RemoveFrontend(name string) error {
 
 	f, ok := s.frontends[name]
 	if !ok {
-		return fmt.Errorf("Frontend %s does not exist", name)
+		f.Warn("Frontend doesn't exist",
+			zap.String("name", name),
+		)
+	} else {
+		s.removeFrontend(f)
 	}
-
-	s.removeFrontend(name, f)
-	return nil
 }
 
+// RemoveFrontends removes all the frontends
 func (s *Server) RemoveFrontends() {
 	s.frontendsL.Lock()
 	defer s.frontendsL.Unlock()
-	for name, f := range s.frontends {
-		s.removeFrontend(name, f)
+	for _, f := range s.frontends {
+		s.removeFrontend(f)
 	}
 }
 
-func (s *Server) removeFrontend(name string, f *frontend) {
-	delete(s.frontends, name)
-	if err := f.Listener.Close(); err != nil {
-		s.Warn("Close frontend connection error",
-			zap.String("name", name),
+func (s *Server) removeFrontend(f *frontend) {
+	delete(s.frontends, f.Name)
+	if err := f.Stop(); err != nil {
+		s.Warn("Stop frontend connection error",
+			zap.String("name", f.Name),
 			zap.Error(err),
 		)
 	}

@@ -1,0 +1,13 @@
+[Unit]
+Description=A reverse proxy with SNI multiplexing in Go
+After=network.target
+Documentation=https://github.com/acls/goproxy
+
+[Service]
+Type=simple
+ExecStart=/home/acls/bin/goproxy /home/acls/goproxy/config.yml
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

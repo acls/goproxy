@@ -26,10 +26,6 @@
 
 
 [[constraint]]
-  name = "github.com/go-yaml/yaml"
-  version = "2.2.1"
-
-[[constraint]]
   branch = "master"
   name = "github.com/inconshreveable/go-vhost"
 
