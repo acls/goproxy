@@ -6,9 +6,9 @@ import (
 	"io/ioutil"
 	"net"
 	"reflect"
-	"slt/conf"
 	"testing"
 
+	"github.com/acls/goproxy/conf"
 	"go.uber.org/zap"
 )
 

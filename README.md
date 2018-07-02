@@ -1,4 +1,4 @@
-slt is a dead-simple TLS reverse-proxy with SNI multiplexing (TLS virtual hosts).
+goproxy is a simple reverse-proxy with SNI multiplexing (TLS virtual hosts).
 
 That means you can send TLS/SSL connections for multiple different applications to the same port and forward
 them all to the appropriate backend hosts depending on the intended destination.
@@ -6,10 +6,10 @@ them all to the appropriate backend hosts depending on the intended destination.
 # Features
 
 ### SNI Multiplexing
-slt multiplexes connections to a single TLS port by inspecting the name in the SNI extension field of each connection.
+goproxy multiplexes connections to a single TLS port by inspecting the name in the SNI extension field of each connection.
 
 ### Simple YAML Configuration
-You configure slt with a simple YAML configuration file:
+You configure goproxy with a simple YAML configuration file:
 
 ```yaml
 ":443":
@@ -53,7 +53,7 @@ NOTE: When using non-standard ports the frontend domain needs to include the por
 
 
 ### Optional TLS Termination
-Sometimes, you don't actually want to terminate the TLS traffic, you just want to forward it elsewhere. slt only
+Sometimes, you don't actually want to terminate the TLS traffic, you just want to forward it elsewhere. goproxy only
 terminates the TLS traffic if you specify a private key and certificate file like so:
 
 ```yaml
@@ -66,7 +66,7 @@ terminates the TLS traffic if you specify a private key and certificate file lik
 
 
 ### Round robin load balancing among arbitrary backends
-slt performs simple round-robin load balancing when more than one backend is available (other strategies will be available in the future):
+goproxy performs simple round-robin load balancing when more than one backend is available (other strategies will be available in the future):
 
 ```yaml
 ":443":
@@ -79,9 +79,9 @@ slt performs simple round-robin load balancing when more than one backend is ava
 
 
 # Running it
-Running slt is also simple. It takes a single argument, the path to the configuration file:
+Running goproxy is also simple. It takes a single argument, the path to the configuration file:
 
-    ./slt /path/to/config.yml
+    ./goproxy /path/to/config.yml
 
 
 # Building it

@@ -1,6 +1,6 @@
 package proxy
 
-import "slt/conf"
+import "github.com/acls/goproxy/conf"
 
 // BackendStrategy interface
 type BackendStrategy interface {

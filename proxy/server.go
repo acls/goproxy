@@ -7,10 +7,9 @@ import (
 	"sync"
 	"time"
 
+	"github.com/acls/goproxy/conf"
 	vhost "github.com/inconshreveable/go-vhost"
 	"go.uber.org/zap"
-
-	"slt/conf"
 )
 
 const (

@@ -6,11 +6,12 @@ import (
 	"fmt"
 	"os"
 	"path"
-	"slt/conf"
-	"slt/proxy"
 	"sync"
 
 	"go.uber.org/zap"
+
+	"github.com/acls/goproxy/conf"
+	"github.com/acls/goproxy/proxy"
 )
 
 func main() {
@@ -78,7 +79,7 @@ func main() {
 				wg.Done()
 			}()
 			if err := s.Run(); err != nil {
-				zap.L().Fatal("Failed to start slt", zap.Error(err))
+				zap.L().Fatal("Failed to start", zap.Error(err))
 				os.Exit(1)
 			}
 		}(s)
