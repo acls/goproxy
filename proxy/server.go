@@ -7,8 +7,8 @@ import (
 	"sync"
 	"time"
 
+	vhost "github.com/acls/go-vhost"
 	"github.com/acls/goproxy/conf"
-	vhost "github.com/inconshreveable/go-vhost"
 	"go.uber.org/zap"
 )
 

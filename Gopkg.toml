@@ -27,7 +27,7 @@
 
 [[constraint]]
   branch = "master"
-  name = "github.com/inconshreveable/go-vhost"
+  name = "github.com/acls/go-vhost"
 
 [prune]
   go-tests = true

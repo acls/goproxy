@@ -206,10 +206,9 @@ func TestMany(t *testing.T) {
 	}
 
 	go sendData("Hello 1", "test1.example.com")
-	zap.L().Info("asfd")
 	check(l1, "Hello 1")
 
-	go sendData("Hello 2", "test2.example.com")
+	go sendData("Hello 2", "test2.example.com:80")
 	check(l2, "Hello 2")
 }
 
